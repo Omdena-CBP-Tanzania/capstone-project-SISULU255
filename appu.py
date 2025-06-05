@@ -4,75 +4,115 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn as sns
 import joblib
-
-# Load model
-model = joblib.load('tanzania_climate_model.pkl')
+from datetime import datetime
 
 # Title
-st.title("🌍 Tanzania Climate Prediction & Trends")
+st.title("🌍 Tanzania Climate Prediction")
 st.markdown("""
-This Streamlit app allows you to:
-- Explore Tanzania climate data trends 📈
-- Predict future temperature & rainfall 🌧️🌡️
+This Web app predicts monthly temperature and rainfall in Tanzania using historical climate data (2000–2020)
 """)
 
-# Sidebar inputs
+# Load data and model
+@st.cache_data
+def load_data():
+    return pd.read_csv('tanzania_climate_data.csv')
+
+@st.cache_resource
+def load_model():
+    return joblib.load('tanzania_climate_model.pkl')
+
+df = load_data()
+model = load_model()
+
+# Sidebar input
 with st.sidebar:
-    st.header("Input Parameters")
-    year = st.number_input("Year", min_value=2000, max_value=2100, value=2023)
-    month = st.selectbox("Month", range(1, 13), index=0)
-    prev_temp = st.number_input("Previous Month Avg Temperature (°C)", min_value=10.0, max_value=40.0, value=25.0)
-    prev_rain = st.number_input("Previous Month Total Rainfall (mm)", min_value=0.0, max_value=500.0, value=100.0)
+    st.header("Prediction Parameters")
+    current_year = datetime.now().year
+    year = st.number_input("Year", min_value=2000, max_value=current_year+10, value=current_year)
+    
+    month = st.selectbox(
+        "Month",
+        options=[
+            (1, "January"), (2, "February"), (3, "March"), 
+            (4, "April"), (5, "May"), (6, "June"),
+            (7, "July"), (8, "August"), (9, "September"),
+            (10, "October"), (11, "November"), (12, "December")
+        ],
+        format_func=lambda x: x[1],
+        index=0
+    )
     predict = st.button("Predict Climate")
 
-# Make prediction
+# Main content
 if predict:
-    input_df = pd.DataFrame({
-        'Year': [year],
-        'Month': [month],
-        'Previous_Temperature': [prev_temp],
-        'Previous_Rainfall': [prev_rain]
-    })
+    try:
+        # One-hot encode the month
+        month_num = month[0]
+        month_columns = [f"Month_{i}" for i in range(1, 13)]
+        month_data = {col: [1 if int(col.split("_")[1]) == month_num else 0] for col in month_columns}
+        
+        # Create input DataFrame
+        input_data = pd.DataFrame({
+            'Year': [year],
+            **month_data
+        })
 
-    prediction = model.predict(input_df)
+        # Make prediction
+        prediction = model.predict(input_data)
 
-    st.subheader("📊 Prediction Result")
-    st.write(f"Predicted Avg Temperature: **{prediction[0][0]:.2f} °C**")
-    st.write(f"Predicted Total Rainfall: **{prediction[0][1]:.2f} mm**")
+        # Display results
+        st.subheader("📊 Prediction Results")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Predicted Temperature", f"{prediction[0][0]:.1f} °C")
+        with col2:
+            st.metric("Predicted Rainfall", f"{prediction[0][1]:.1f} mm")
 
-    st.line_chart(pd.DataFrame({
-        'Month': ['Previous', 'Predicted'],
-        'Temperature': [prev_temp, prediction[0][0]],
-        'Rainfall': [prev_rain, prediction[0][1]]
-    }).set_index('Month'))
+        # Historical context
+        st.subheader("📈 Historical Context")
+        historical = df[df['Month'] == month_num]
+        avg_temp = historical['Average_Temperature_C'].mean()
+        avg_rain = historical['Total_Rainfall_mm'].mean()
 
-# EDA visualizations from notebook
-st.subheader("🔍 Climate Trends in Tanzania (2000–2020)")
+        col1, col2 = st.columns(2)
+        with col1:
+            st.metric("Historical Avg Temperature", 
+                      f"{avg_temp:.1f} °C", 
+                      f"{prediction[0][0] - avg_temp:+.1f} °C vs average")
+        with col2:
+            st.metric("Historical Avg Rainfall", 
+                      f"{avg_rain:.1f} mm", 
+                      f"{prediction[0][1] - avg_rain:+.1f} mm vs average")
 
-df = pd.read_csv('tanzania_climate_data.csv')
-df['Date'] = pd.to_datetime(df['Year'].astype(str) + '-' + df['Month'].astype(str))
+    except Exception as e:
+        st.error(f"❌ Error making prediction: {str(e)}")
 
-tab1, tab2, tab3 = st.tabs(["Temperature Trend", "Rainfall Trend", "Monthly Patterns"])
+# EDA Visualizations
+st.subheader("🔍 Climate Trends Explorer")
+
+tab1, tab2 = st.tabs(["Temperature Analysis", "Rainfall Analysis"])
 
 with tab1:
-    st.write("### Average Temperature Over Time")
+    st.write("### Monthly Temperature Trends")
+    yearly_avg = df.groupby('Year')['Average_Temperature_C'].mean().reset_index()
     fig, ax = plt.subplots(figsize=(10, 4))
-    sns.lineplot(x='Date', y='Average_Temperature_C', data=df, ax=ax)
-    ax.set_title("Average Temperature in Tanzania")
+    sns.lineplot(x='Year', y='Average_Temperature_C', data=yearly_avg, ax=ax)
+    ax.set_title("Yearly Average Temperature")
+    ax.set_ylabel("Temperature (°C)")
     st.pyplot(fig)
 
-with tab2:
-    st.write("### Total Rainfall Over Time")
-    fig, ax = plt.subplots(figsize=(10, 4))
-    sns.lineplot(x='Date', y='Total_Rainfall_mm', data=df, ax=ax)
-    ax.set_title("Total Rainfall in Tanzania")
-    st.pyplot(fig)
-
-with tab3:
-    st.write("### Temperature & Rainfall by Month")
     fig, ax = plt.subplots(figsize=(10, 4))
     sns.boxplot(x='Month', y='Average_Temperature_C', data=df, ax=ax)
     ax.set_title("Monthly Temperature Distribution")
+    st.pyplot(fig)
+
+with tab2:
+    st.write("### Monthly Rainfall Trends")
+    yearly_rain = df.groupby('Year')['Total_Rainfall_mm'].sum().reset_index()
+    fig, ax = plt.subplots(figsize=(10, 4))
+    sns.lineplot(x='Year', y='Total_Rainfall_mm', data=yearly_rain, ax=ax)
+    ax.set_title("Yearly Total Rainfall")
+    ax.set_ylabel("Rainfall (mm)")
     st.pyplot(fig)
 
     fig, ax = plt.subplots(figsize=(10, 4))
